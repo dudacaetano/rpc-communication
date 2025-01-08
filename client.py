@@ -1,20 +1,21 @@
 import socket 
 import msgpack as m
+import json
 import pygame as p  
 import threading
 
 from datetime import datetime
 from utils.notification import NotificationType
 from gameConstruct.board import DrawGrid
-import xmlrpc.client
+from xmlrpc.client import ServerProxy
+from xmlrpc.server import SimpleXMLRPCServer
+
 
 class Client:
     def __init__(self, HOST = '0.0.0.0', PORT=55557):
         self.HOST = HOST
         self.PORT = PORT
-        self.server = xmlrpc.client.ServerProxy("http://localhost:55558")
-        #self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        
+
         p.init()
         self.gameDisplay = p.display.set_mode((1100, 800), p.DOUBLEBUF)
         self.gameClock = p.time.Clock()
@@ -40,46 +41,198 @@ class Client:
         self.blackPoints = 2
         self.blackPointsTxt = 'black'
         
+        self.remoteserver = None
+        self.callback_address = None
         
+    
+    def start_callback_server(self, PORT = 0):
+        """
+        Inicia um servidor de callback XML-RPC para receber mensagens.
+        """    
+        def receive_message(message):
+            print(message)
+            msg = json.loads(message)
+            print(f"\nMessage received: {msg}")
+            self.handle_message(msg)
+            return True
         
-    def openConnect(self):
-        try:
-            self.socket.connect((self.HOST, self.PORT))
-            print("Connected to the serve")
-        except ConnectionRefusedError:
-            print("Failed to connect to the server")
-            return
-        except Exception as e:
-            print(f"An error ocurred while connecting:{e}")
-            return
+        #INCIA O SERVIDOR E CAPTURA O ENDEREÇO 
+        callback_server = SimpleXMLRPCServer(("0.0.0.0", PORT), allow_none=True, logRequests=False)
+        callback_server.register_function(receive_message, "receive_message")
         
-    def listenThread(self):
-        thread = threading.Thread(target=self.messageListen, daemon=True)
-        thread.start()
+        #Obtem a porta usada se port=0 foi passado
+        assigned_port = callback_server.server_address[1]
+        
+        threading.Thread(target= callback_server.serve_forever, daemon=True).start()
+        return f"http://{self.HOST}:{assigned_port}"
+    
+    def register(self):
+        set_data = self.remoteserver.register()
+        print(json.loads(set_data))
+        self.executeConfig(json.loads(set_data))
+        
+        print(f"Connected as Client {self.playerTurn}")
+        
+        self.callback_address = self.start_callback_server()
+        print(f"Listening for messages on {self.callback_address}...")
+        self.remoteserver.receive_callback(self.playerTurn, self.callback_address)
     
     def run(self):
-        self.connServer()
-        self.openConnect()
-        self.listenThread()
-        
-        '''threadListen = threading.Thread(target=self.messageListen)
-        threadListen.daemon = True
-        threadListen.start()'''
+       HOST =  input ('Enter the server IP to connect:').strip()
+       PORT = input('Enter the server PORT to connect:').strip()
+       self.HOST = HOST
+       self.PORT = int(PORT)
+       self.remoteserver = ServerProxy(f"http://{self.HOST}:{self.PORT}/", allow_none=True)
+       self.register()
         
     
     def launchRun(self):
-        clientHOST, clientPORT = self.socket.getsockname()
-        serverHOST, serverPORT = self.socket.getpeername()
-        p.display.set_caption(f" OthelloClient {clientHOST}:{clientPORT} connected to server {serverHOST}:{serverPORT}")
+        p.display.set_caption(f" OthelloClient-RPC-CONNECTION {self.callback_address} connected to server http://{self.HOST}:{self.PORT}")
         while self.RUN == True: 
             self.input()
             self.draw()
             self.gameClock.tick(60)
             
+    def receive_messages(self):
+        try:
+            while self.RUN:
+                if _message := self.socket.recv(4096).decode():
+                    print()
+                    print(_message)
+                    try:
+                        message = json.loads(_message)
+                        self.handle_message(message)
+                    except json.JSONDecodeError:
+                        print("Error decoding the JSON message")
+        except ConnectionResetError:
+            print("Connection lost with the server.")
+        finally:
+            self.socket.close()
+    
+    def send_move(self, x, y):
+        message = {
+            "type": NotificationType.ACTION.value,
+            "x": x,
+            "y": y
+        }
+        self.remoteserver.send_message(self.playerTurn*-1, json.dumps(message))
+    
+    def send_message_chat(self, content):
+        message = {
+            "type": NotificationType.CHAT.value,
+            "content": content,
+            "player": self.playerTurn * -1
+        }
+        self.remoteserver.send_message(self.playerTurn*-1, json.dumps(message))
+    
+    def send_giveup(self):
+        message ={
+            "type": NotificationType.GIVEUP.value
+        }   
+        self.remoteserver.send_message(self.playerTurn*-1, json.dumps(message))
+        self.endGame = True
+    
+    def send_reset(self):
+        message = {
+            "type": NotificationType.RESET.value
+        }
+        self.remoteserver.send_message(self.playerTurn*-1, json.dumps(message))
+    
+    def executeConfig(self, message):
+        playerTurn = message.get('playerTurn')
+        
+        self.endGame = False
+        
+        self.playerTurn = playerTurn
+        self.gameTurn = -1
+        self.whitePoints = 2
+        self.whitePointsTxt = 'PLAYER-2'
+        self.blackPoints = 2
+        self.blackPointsTxt = 'PLAYER-1'
+        
+        self.executeScore()
+        
+        if self.playerTurn == 1:
+            self.whitePointsTxt += '# YOU'
+        else: 
+            self.blackPointsTxt += '# YOU'
+        
+        self.board.tokens.clear()
+        boardLogic = message.get('board')
+        self.update(boardLogic, -1)
+        self.endGame = False
+        
+    def executeUpdate(self, message):
+        boardLogic = message.get('board')
+        gameTurn = message.get('gameTurn')
+        self.update(boardLogic, gameTurn)
+     
+    '''def displayChatMessage(self, content, timestamp):
+        formattedMessage = f"[{timestamp}] {content}"
+        self.chatLog.append(['r',formattedMessage]) '''   
+        
+    def executeChat(self, message):
+        content = message.get('content')
+        #timestamp = message.get('timestamp')
+        #self.displayChatMessage(content, timestamp) 
+        self.chatLog.append(['r', content])   
+                    
+    
+    def executeEndGame(self):
+        self.endGame = True 
+        
+        resultsGame = {
+            1:('YOU ARE THE WINNER!!', 'YOU LOST:('),
+            -1:('YOU LOST:(','YOU ARE THE WINNER!!'),
+            0:('#RRR','#RRR')  
+        }
+        
+        WINNER = 1 if self.whitePoints>self.blackPoints else(-1 if self.whitePoints < self.blackPoints else 0)
+        
+        self.whitePointsTxt += f'{resultsGame[WINNER][0]}'
+        self.blackPointsTxt += f'{resultsGame[WINNER][1]}'
+        
+        
+    def executeGiveUp(self):
+        self.endGame = True
+        
+        resultsGame = {
+            -1:('YOU ARE THE WINNER!!', 'GAVEUP'),
+             1:('WON', 'GAVEUP')
+        }
+        self.whitePointsTxt += f'{resultsGame.get(self.playerTurn, ("",""))[0]}'
+        self.blackPointsTxt += f'{resultsGame.get(self.playerTurn,("",""))[1]}'
+        
+    
+        
+    def handle_message(self, message, client):
+        print(message)
+        message_type = message.get('type')
+        
+        if message_type == NotificationType.ACTION.value:
+            self.executeMove(message)
+        
+        if message_type == NotificationType.CHAT.value:
+            self.executeChat(message)
+        
+        if message_type == NotificationType.RESET.value:
+            self.executeReset()
+        
+        if message_type == NotificationType.GIVEUP.value:
+            self.executeGiveup(client, message)
+        
+        else: 
+            print("Unknown message type", message)
+    
+    def get_server_address(self):
+        HOST = input('Enter the server IP to connect: ').strip()
+        PORT = input('Enter the server port to connect: ').strip()
+        self.HOST = HOST
+        self.PORT = int(PORT)
     #<<<<<<<<<<<<<<<<<<<<<<<<<<< EVENT BUTTON >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     def quitEvent(self, event):
         if event.type == p.QUIT:
-            self.notifyGiveUp()
+            self.send_giveup()
             self.RUN = False
     
     def textInput(self, event):
@@ -92,7 +245,7 @@ class Client:
             if event.key == p.K_BACKSPACE:
                 self.INPUT_TEXT = self.INPUT_TEXT[:-1]
             elif event.key == p.K_RETURN and self.INPUT_TEXT != '':
-                self.notifyChatMessage(self.INPUT_TEXT)
+                self.send_message_chat(self.INPUT_TEXT)
                 self.chatLog.append(["s", self.INPUT_TEXT])
                 self.INPUT_TEXT = ''
                 
@@ -105,11 +258,11 @@ class Client:
                 self.gameMouseClick(x, y)
     def endGameMouseClick(self, x, y):
         if 800 <= x <= (800 + 250) and 130 <= y <= (130 + 30):
-            self.notifyReset()
+            self.send_reset()
             
     def gameMouseClick(self, x, y):
         if 800 <= x <= (800 + 250) and 130 <= y <= (130 + 30):
-            self.notifyGiveUp()
+            self.send_giveup()
             self.endGame = True
             self.updateScoreGiveup()
         elif self.gameTurn == self.playerTurn:
@@ -132,7 +285,7 @@ class Client:
                 for tile in swappableTiles:
                     self.board.animateTransitions(tile, self.gameTurn)
                     self.board.boardLogic[tile[0]][tile[1]] *= -1
-                self.notifyAction(x, y)
+                self.send_move(x, y)
                 self.gameTurn *= -1
                 self.executeScore()
     
@@ -219,12 +372,6 @@ class Client:
             #resetButtonImage = p.transform.scale(resetButtonImage, (buttonWidth, buttonHeight))
             
             self.gameDisplay.blit(resetButtonImage, (buttonX, buttonY))
-        
-        
-            
-    def renderEndGameWindow(self):
-        #TODO
-        pass
             
     def renderGiveUp(self):
         if not self.endGame:
@@ -252,180 +399,6 @@ class Client:
         self.renderGiveUp()
         
         p.display.flip()
-        
-
-#<<<<<<<<<<<<<<<<<<< LISTEN FUNCTIONS >>>>>>>>>>>>>>>>>>>>
-        
-    def messageListen(self):
-        try:
-            while True: 
-                # recebe dados em bytes
-                data = self.socket.recv(4096)
-                if data:
-                    print()
-                    print(f"Receive message: {data}")
-                    
-                    try:
-                        #desempacota os dados usando msgpack
-                        message = m.unpackb(data)
-                        self.handleMessage(message)
-                    except m.exceptions.ExtraData:
-                         print("ERROR decoding the MessagePack message: Extra data encountered")
-                    except m.exceptions.UnpackException as e:
-                         print(f"ERROR unpacking MessagePack data: {e}")
-                         
-        except ConnectionResetError:
-            print("Connection lost with the server")
-        finally:
-            self.socket.close()
-            
-# <<<<<<<<<<<<<<<<< SEND FUNCTIONS >>>>>>>>>>>>>>>>>>>>
-
-    def createMessage(self, messageType, **keyarg):
-        #cria uma mensagem com o tipo e parametros passados 
-        message = {"type": messageType}
-        message.update(keyarg)
-        return message 
-    
-    def notifyAction(self, x,y):
-        
-        message = self.createMessage(NotificationType.ACTION.value, x=x, y=y)
-        packedMessage = m.packb(message)
-        self.socket.send(packedMessage)
-        
-        
-    def notifyChatMessage(self,content):
-        message = self.createMessage(
-            NotificationType.CHAT.value, 
-            content=content, 
-            player=self.playerTurn * -1)
-        
-        packedMessage = m.packb(message)
-        self.socket.send(packedMessage)
-    
-    def notifyGiveUp(self):
-        #self.endGame = True
-        message = self.createMessage(NotificationType.GIVEUP.value)
-        packedMessage = m.packb(message)
-        self.socket.send(packedMessage)
-        
-    def notifyReset(self):
-        message = self.createMessage(NotificationType.RESET.value)
-        packedMessage = m.packb(message)
-        self.socket.send(packedMessage)
-    
-#<<<<<<<<<<<<<<< EXECUTION FUNCTIONS >>>>>>>>>>>>>>>>>>>>>>>
-    
-    def executeConfig(self, message):
-        playerTurn = message.get('playerTurn')
-        
-        self.endGame = False
-        
-        self.playerTurn = playerTurn
-        self.gameTurn = -1
-        self.whitePoints = 2
-        self.whitePointsTxt = 'PLAYER-2'
-        self.blackPoints = 2
-        self.blackPointsTxt = 'PLAYER-1'
-        
-        self.executeScore()
-        
-        if self.playerTurn == 1:
-            self.whitePointsTxt += '# YOU'
-        else: 
-            self.blackPointsTxt += '# YOU'
-        
-        self.board.tokens.clear()
-        boardLogic = message.get('board')
-        self.update(boardLogic, -1)
-        self.endGame = False
-        
-    
-    def executeUpdate(self, message):
-        boardLogic = message.get('board')
-        gameTurn = message.get('gameTurn')
-        self.update(boardLogic, gameTurn)
-    
-    '''def formatChatMessage(self, content, player):
-        currentTime = datetime.now().strftime("%H:%M")
-        
-        formattedMessage = f"[{currentTime}] Player{player}: {content}"
-        return formattedMessage'''
-     
-    def displayChatMessage(self, content, timestamp):
-        formattedMessage = f"[{timestamp}] {content}"
-        self.chatLog.append(['r',formattedMessage])    
-        
-    def executeChat(self, message):
-        content = message.get('content')
-        timestamp = message.get('timestamp')
-        
-        self.displayChatMessage(content, timestamp)
-        
-    '''content = message.get('content')
-        self.chatLog.append(['r', content])'''
-        
-    def executeEndGame(self):
-        self.endGame = True 
-        
-        resultsGame = {
-            1:('YOU ARE THE WINNER!!', 'YOU LOST:('),
-            -1:('YOU LOST:(','YOU ARE THE WINNER!!'),
-            0:('#RRR','#RRR')  
-        }
-        
-        WINNER = 1 if self.whitePoints>self.blackPoints else(-1 if self.whitePoints < self.blackPoints else 0)
-        
-        self.whitePointsTxt += f'{resultsGame[WINNER][0]}'
-        self.blackPointsTxt += f'{resultsGame[WINNER][1]}'
-        
-        self.renderEndGameWindow()
-        
-        
-    def executeGiveUp(self):
-        self.endGame = True
-        
-        resultsGame = {
-            -1:('YOU ARE THE WINNER!!', 'GAVEUP'),
-             1:('WON', 'GAVEUP')
-        }
-        self.whitePointsTxt += f'{resultsGame.get(self.playerTurn, ("",""))[0]}'
-        self.blackPointsTxt += f'{resultsGame.get(self.playerTurn,("",""))[1]}'
-        
-        
-        '''self.endGame = True
-        
-        if self.playerTurn == -1:
-            self.blackPointsTxt += ' YOU ARE THE WINNER!!! '
-            self.whitePointsTxt +=  ' GAVEUP '
-        
-        else: 
-            self.whitePointsTxt += ' WON'
-            self.blackPointsTxt += ' GAVEUP'
-            '''
-            
-#<<<<<<<<<<<<<<<<<< HANDLER FUNCTIONS >>>>>>>>>>>>>>>>>>
-        
-    def handleMessage(self, message):
-        messageType = message.get('type')
-        
-        if messageType == NotificationType.REFRESH.value:
-            self.executeUpdate(message)
-        
-        elif messageType == NotificationType.CONFIG.value:
-            self.executeConfig(message)
-        
-        elif messageType == NotificationType.CHAT.value:
-            self.executeChat(message)
-        
-        elif messageType == NotificationType.END_GAME.value:
-            self.executeEndGame()
-        
-        elif messageType == NotificationType.GIVEUP.value:
-            self.executeGiveUp()
-        
-        else:
-            print("Unknown message type", message)
     
 
 #<<<<<<<<<<<< call SERVER >>>>>>>>>>>>
