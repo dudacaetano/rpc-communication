@@ -16,17 +16,19 @@ ele torna a operação mais rápida e simples.
 
 
 def connectLAN():
+    LAN_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    LAN_socket.settimeout(0)
+    
     try:
-        #tentar obter o IP da váriavel de ambiente, caso contrario, usa a funcao de obter o ip local
-        ipLocal =  os.getenv("LAN_IP", socket.gethostbyname(socket.gethostname()))
+        #conectar em qualquer IP
+        LAN_socket.connect(('10.254.254.254',1))
+        local_ip = LAN_socket.getsockname()[0] # retorna o ip local
     except Exception:
-        ipLocal = '127.0.0.1'  # Fallback para localhost se falhar
-    return ipLocal
-    
-   
-   
-   
-    
+        local_ip = '127.0.0.1' # retorna o localhost em caso de falha 
+    finally:
+        LAN_socket.close()
+    return local_ip
+        
 """
      try:
         ipLocal = socket.gethostbyname(socket.gethostname())
@@ -34,7 +36,6 @@ def connectLAN():
         ipLocal = '127.0.0.1'  # Fallback para localhost se falhar
     return ipLocal
 """
-
 
 
 

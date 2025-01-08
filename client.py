@@ -7,12 +7,13 @@ import threading
 from datetime import datetime
 from utils.notification import NotificationType
 from gameConstruct.board import DrawGrid
+
 from xmlrpc.client import ServerProxy
 from xmlrpc.server import SimpleXMLRPCServer
 
 
 class Client:
-    def __init__(self, HOST = '0.0.0.0', PORT=55557):
+    def __init__(self, HOST = '0.0.0.0', PORT=4444):
         self.HOST = HOST
         self.PORT = PORT
 
@@ -31,10 +32,11 @@ class Client:
         self.FONT = p.font.SysFont('arial', 18)
         self.chatBackground = p.image.load("assets/chatBackground.png")
         self.chatBackground = p.transform.scale(self.chatBackground,(250, 500))
+        self.chatLog = []
         
         self.inputBoxChat = p.image.load("assets/chatInputBackground.png")
         self.inputBoxChat = p.transform.scale(self.inputBoxChat, (250, 30))
-        self.chatLog = []
+        
         
         self.whitePoints = 2
         self.whitePointsTxt = 'white'
@@ -67,9 +69,9 @@ class Client:
         return f"http://{self.HOST}:{assigned_port}"
     
     def register(self):
-        set_data = self.remoteserver.register()
-        print(json.loads(set_data))
-        self.executeConfig(json.loads(set_data))
+        setup_data = self.remoteserver.register()
+        print(json.loads(setup_data))
+        self.executeConfig(json.loads(setup_data))
         
         print(f"Connected as Client {self.playerTurn}")
         
@@ -86,9 +88,10 @@ class Client:
        self.register()
         
     
-    def launchRun(self):
-        p.display.set_caption(f" OthelloClient-RPC-CONNECTION {self.callback_address} connected to server http://{self.HOST}:{self.PORT}")
-        while self.RUN == True: 
+    def run_GUI(self):
+        p.display.set_caption(f"Othello-Client-RPC, Listening on: {self.callback_address}, Calling on: http://{self.HOST}:{self.PORT}")
+
+        while self.RUN:
             self.input()
             self.draw()
             self.gameClock.tick(60)
@@ -121,11 +124,11 @@ class Client:
         message = {
             "type": NotificationType.CHAT.value,
             "content": content,
-            "player": self.playerTurn * -1
+            "playerTurn": self.playerTurn * -1
         }
         self.remoteserver.send_message(self.playerTurn*-1, json.dumps(message))
     
-    def send_giveup(self):
+    def send_giveUp(self):
         message ={
             "type": NotificationType.GIVEUP.value
         }   
@@ -153,19 +156,19 @@ class Client:
         self.executeScore()
         
         if self.playerTurn == 1:
-            self.whitePointsTxt += '# YOU'
+            self.whitePointsTxt += 'WHITE# YOU'
         else: 
-            self.blackPointsTxt += '# YOU'
+            self.blackPointsTxt += 'BLACK# YOU'
         
         self.board.tokens.clear()
         boardLogic = message.get('board')
-        self.update(boardLogic, -1)
+        self.refresh(boardLogic, -1)
         self.endGame = False
         
-    def executeUpdate(self, message):
+    def executeRefresh(self, message):
         boardLogic = message.get('board')
         gameTurn = message.get('gameTurn')
-        self.update(boardLogic, gameTurn)
+        self.refresh(boardLogic, gameTurn)
      
     '''def displayChatMessage(self, content, timestamp):
         formattedMessage = f"[{timestamp}] {content}"
@@ -173,10 +176,9 @@ class Client:
         
     def executeChat(self, message):
         content = message.get('content')
+        self.chatLog.append(['r', content]) 
         #timestamp = message.get('timestamp')
         #self.displayChatMessage(content, timestamp) 
-        self.chatLog.append(['r', content])   
-                    
     
     def executeEndGame(self):
         self.endGame = True 
@@ -193,7 +195,7 @@ class Client:
         self.blackPointsTxt += f'{resultsGame[WINNER][1]}'
         
         
-    def executeGiveUp(self):
+    def executeGiveUp(self,message):
         self.endGame = True
         
         resultsGame = {
@@ -205,21 +207,24 @@ class Client:
         
     
         
-    def handle_message(self, message, client):
-        print(message)
+    def handle_message(self, message):
+        
         message_type = message.get('type')
         
-        if message_type == NotificationType.ACTION.value:
-            self.executeMove(message)
+        if message_type == NotificationType.REFRESH.value:
+            self.executeRefresh(message)
+        
+        if message_type == NotificationType.CONFIG.value:
+            self.executeConfig(message)
         
         if message_type == NotificationType.CHAT.value:
-            self.executeChat(message)
+            self.executeChat()
         
-        if message_type == NotificationType.RESET.value:
-            self.executeReset()
-        
+        if message_type == NotificationType.END_GAME.value:
+            self.executeEndGame()
+            
         if message_type == NotificationType.GIVEUP.value:
-            self.executeGiveup(client, message)
+            self.executeGiveUp()
         
         else: 
             print("Unknown message type", message)
@@ -229,81 +234,63 @@ class Client:
         PORT = input('Enter the server port to connect: ').strip()
         self.HOST = HOST
         self.PORT = int(PORT)
-    #<<<<<<<<<<<<<<<<<<<<<<<<<<< EVENT BUTTON >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-    def quitEvent(self, event):
-        if event.type == p.QUIT:
-            self.send_giveup()
-            self.RUN = False
-    
-    def textInput(self, event):
-        if event.type == p.TEXTINPUT:
-            if len(self.INPUT_TEXT) < 19:
-                self.INPUT_TEXT += event.text
-    
-    def keydownEvent(self, event):
-        if event.type == p.KEYDOWN:
-            if event.key == p.K_BACKSPACE:
-                self.INPUT_TEXT = self.INPUT_TEXT[:-1]
-            elif event.key == p.K_RETURN and self.INPUT_TEXT != '':
-                self.send_message_chat(self.INPUT_TEXT)
-                self.chatLog.append(["s", self.INPUT_TEXT])
-                self.INPUT_TEXT = ''
-                
-    def mouseButtonEvent(self, event):
-        if event.type == p.MOUSEBUTTONDOWN and event.button == 1:
-            x, y = p.mouse.get_pos()
-            if self.endGame:
-                self.endGameMouseClick(x, y)
-            else:
-                self.gameMouseClick(x, y)
-    def endGameMouseClick(self, x, y):
-        if 800 <= x <= (800 + 250) and 130 <= y <= (130 + 30):
-            self.send_reset()
-            
-    def gameMouseClick(self, x, y):
-        if 800 <= x <= (800 + 250) and 130 <= y <= (130 + 30):
-            self.send_giveup()
-            self.endGame = True
-            self.updateScoreGiveup()
-        elif self.gameTurn == self.playerTurn:
-            self.gameMove(x, y)
-    
-    def updateScoreGiveup(self):
-        if self.playerTurn == 1:
-            self.blackPointsTxt += ' YOU ARE THE WINNER'
-            self.whitePointsTxt += ' GAVEUP :('
-        else:
-            self.whitePointsTxt += ' YOU ARE THE WINNER'
-            self.blackPointsTxt += ' GAVEUP'
-    
-    def gameMove(self, x, y):
-        x, y = (x - 80) // 80, (y - 80) // 80
-        if validCells := self.board.findPlayableMoves(self.board.boardLogic, self.gameTurn):
-            if (y, x) in validCells:
-                self.board.insertToken(self.board.boardLogic, self.gameTurn, y, x)
-                swappableTiles = self.board.fetchSwappableTiles(y, x, self.board.boardLogic, self.gameTurn)
-                for tile in swappableTiles:
-                    self.board.animateTransitions(tile, self.gameTurn)
-                    self.board.boardLogic[tile[0]][tile[1]] *= -1
-                self.send_move(x, y)
-                self.gameTurn *= -1
-                self.executeScore()
     
     def input(self):
-        eventHandler = {
-            p.QUIT: self.quitEvent,
-            p.TEXTINPUT: self.textInput,
-            p.KEYDOWN: self.keydownEvent,
-            p.MOUSEBUTTONDOWN: self.mouseButtonEvent
-        }
         for event in p.event.get():
-            handler = eventHandler.get(event.type)
-            if handler:
-                handler(event)
+            if event.type == p.QUIT:
+                self.send_giveUp()
+                self.RUN = False
+            if event.type == p.TEXTINPUT:
+                if len(self.INPUT_TEXT) < 19:
+                    self.INPUT_TEXT += event.text
+            if event.type == p.KEYDOWN:
+                if event.key == p.K_BACKSPACE:
+                    self.INPUT_TEXT = self.INPUT_TEXT[:-1]
+                if event.key == p.K_RETURN and self.INPUT_TEXT != '':
+                    self.send_message_chat(self.INPUT_TEXT)
+                    self.chatLog.append(["s", self.INPUT_TEXT])
+                    self.INPUT_TEXT = ''
+                    
+            if event.type == p.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    x, y = p.mouse.get_pos()
+                    
+                    if self.endGame:
+                        # se jogar novamente 
+                        if 800 <= x <= (800+250) and 130 <= y <= (130+30):
+                            print()
+                            self.send_reset()
+                    else: 
+                        # se desistir
+                        if 800 <= x <= (800+250) and 130 <= y <= (130+130):
+                            self.send_giveup()
+                            self.endGame = True
+                            
+                            if self.playerTurn == 1:
+                                self.blackPointsTxt += ' YOU ARE THE WINNER'
+                                self.whitePointsTxt += ' GAVEUP :('
+                            else:
+                                self.whitePointsTxt += ' YOU ARE THE WINNER'
+                                self.blackPointsTxt += ' GAVEUP'
+                        elif self.gameTurn == self.playerTurn:
+                            x, y = (x - 80) // 80, (y - 80) // 80
+                            if validCells := self.board.findPlayableMoves(self.board.boardLogic, self.gameTurn):
+                                if (y, x) in validCells:
+                                    self.board.insertToken(self.board.boardLogic, self.gameTurn, y, x)
+                                    swappableTiles = self.board.fetchSwappableTiles(y, x, self.board.boardLogic, self.gameTurn)
+                                    for tile in swappableTiles:
+                                         self.board.animateTransitions(tile, self.gameTurn)
+                                         self.board.boardLogic[tile[0]][tile[1]] *= -1
+                                    self.send_move(x, y)
+                                    self.gameTurn *= -1
+                                    self.executeScore()
+                            
+                        
+            
         
     
-    def update(self, boardLogic, gameTurn):
-        self.board.boardLogic = boardLogic 
+    def refresh(self, boardLogic, gameTurn):
+        self.board.boardLogic = boardLogic  #atualiza o grid com a nova logica
         
         #  scroll through the entire boardLogic()
         for y in range(len(boardLogic)):
@@ -402,17 +389,17 @@ class Client:
     
 
 #<<<<<<<<<<<< call SERVER >>>>>>>>>>>>
-    def connServer(self):
+''' def connServer(self):
         HOST = input('HOST>>>')
         PORT = input('PORT>>>')
         
         self.HOST = HOST
-        self.PORT = int(PORT)
+        self.PORT = int(PORT)'''
         
 if __name__ == "__main__":
     client = Client()
     client.run()
-    client.launchRun()
+    client.run_GUI() 
         
         
         

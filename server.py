@@ -3,9 +3,6 @@ import socket
 import threading
 import json
 
-import msgpack as m
-import os
-
 from datetime import datetime
 from utils.connectLAN import connectLAN
 from utils.notification import NotificationType
@@ -118,7 +115,7 @@ class Server:
         message = {
             "type":NotificationType.REFRESH.value,
             "board":self.board.boardLogic,
-            "playerTurn": self.gameTurn
+            "gameTurn": self.gameTurn
         }
         self.send_message_to(message, self.gameTurn)
         
@@ -151,18 +148,10 @@ class Server:
         content = message.get('content')
         client = message.get('player')
         message = {
-            "type":NotificationType.CHAT.value,
-            "content": content,
+        "type":NotificationType.CHAT.value,
+        "content": content,
         }
-        self.send_message_to(message, client)
-        
-    
-    def executeGiveup(self, client, message):
-        message = {
-            "type": NotificationType.GIVEUP.value
-            
-        }
-        self.send_message_to(message,client*-1)
+        self.send_message_to(content, client)
         
     def executeReset(self):
         self.board.clearBoardLogic()
@@ -170,6 +159,15 @@ class Server:
         self.endGame = False
         self.send_config(1)
         self.send_config(-1)
+    
+    def executeGiveUp(self, client, message):
+        message = {
+            "type":NotificationType.GIVEUP.value
+        }
+        self.send_message_to(message, client* -1)
+        
+        
+        
         
     def handle_message(self, message, client):
         print(message)
@@ -185,7 +183,7 @@ class Server:
             self.executeReset()
         
         if message_type == NotificationType.GIVEUP.value:
-            self.executeGiveup(client, message)
+            self.executeGiveUp(client, message)
         
         else: 
             print("Unknown message type", message)
