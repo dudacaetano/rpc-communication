@@ -1,10 +1,11 @@
 import socket 
-import msgpack as m
+#import msgpack as m
 import json
 import pygame as p  
 import threading
 
 from datetime import datetime
+
 from utils.notification import NotificationType
 from gameConstruct.board import DrawGrid
 
@@ -47,34 +48,37 @@ class Client:
         self.callback_address = None
         
     
-    def start_callback_server(self, PORT = 0):
+    def start_callback_server(self, PORT=0):
         """
         Inicia um servidor de callback XML-RPC para receber mensagens.
-        """    
+        """
         def receive_message(message):
             print(message)
             msg = json.loads(message)
             print(f"\nMessage received: {msg}")
             self.handle_message(msg)
             return True
-        
-        #INCIA O SERVIDOR E CAPTURA O ENDEREÇO 
+
+        # Inicia o servidor e captura o endereço
         callback_server = SimpleXMLRPCServer(("0.0.0.0", PORT), allow_none=True, logRequests=False)
         callback_server.register_function(receive_message, "receive_message")
-        
-        #Obtem a porta usada se port=0 foi passado
+
+        # Obtém a porta usada se `port=0` foi passado
         assigned_port = callback_server.server_address[1]
-        
-        threading.Thread(target= callback_server.serve_forever, daemon=True).start()
+
+        threading.Thread(target=callback_server.serve_forever, daemon=True).start()
         return f"http://{self.HOST}:{assigned_port}"
+        
+        
     
     def register(self):
         setup_data = self.remoteserver.register()
         print(json.loads(setup_data))
         self.executeConfig(json.loads(setup_data))
-        
+
         print(f"Connected as Client {self.playerTurn}")
-        
+
+
         self.callback_address = self.start_callback_server()
         print(f"Listening for messages on {self.callback_address}...")
         self.remoteserver.receive_callback(self.playerTurn, self.callback_address)
@@ -106,7 +110,7 @@ class Client:
                         message = json.loads(_message)
                         self.handle_message(message)
                     except json.JSONDecodeError:
-                        print("Error decoding the JSON message")
+                        print("Error decoding the JSON message.")
         except ConnectionResetError:
             print("Connection lost with the server.")
         finally:
@@ -177,8 +181,6 @@ class Client:
     def executeChat(self, message):
         content = message.get('content')
         self.chatLog.append(['r', content]) 
-        #timestamp = message.get('timestamp')
-        #self.displayChatMessage(content, timestamp) 
     
     def executeEndGame(self):
         self.endGame = True 
@@ -197,15 +199,22 @@ class Client:
         
     def executeGiveUp(self):
         self.endGame = True
-        
+
+        # Determina o vencedor com base no jogador que desistiu
+        if self.playerTurn == 1: #jogador branco desistiu
+            WINNER = -1 
+        elif self.playerTurn == -1:# jogador preto desistiu
+            WINNER = 1 
+        else:
+            return # caso invalido
+
         resultsGame = {
-            -1:('YOU ARE THE WINNER!!', 'GAVEUP'),
-             1:('WON', 'GAVEUP')
+           1: ('GAVEUP', 'THE WINNER :('),
+          -1: ('THE WINNER', 'GAVEUP'),
         }
-        self.whitePointsTxt += f'{resultsGame.get(self.playerTurn, ("",""))[0]}'
-        self.blackPointsTxt += f'{resultsGame.get(self.playerTurn,("",""))[1]}'
-        
-    
+        # Atualiza os textos de pontuação com base no vencedor
+        self.whitePointsTxt += f'{resultsGame[WINNER][0]}'
+        self.blackPointsTxt += f'{resultsGame[WINNER][1]}'       
         
     def handle_message(self, message):
         

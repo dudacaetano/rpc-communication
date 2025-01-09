@@ -8,7 +8,8 @@ from utils.connectLAN import connectLAN
 from utils.notification import NotificationType
 from gameConstruct.board import othelloLogic
 
-from xmlrpc.server import SimpleXMLRPCServer, SimpleXMLRPCRequestHandler
+from xmlrpc.server import SimpleXMLRPCServer
+from xmlrpc.server import SimpleXMLRPCRequestHandler
 from xmlrpc.client import ServerProxy
 
 
@@ -55,19 +56,19 @@ class Server:
     
     def send_message(self, sender, message):
         """
-        Recebe a mensagem de um cliente e a encaminha ao outro
+        Recebe a mensagem de um cliente e a encaminha ao outro.
         """
         if sender == 1:
-            connect_receive = self.clientBlack # o destinatario é o cliente -1
+            recipient_conn = self.clientBlack  # O destinatário é o cliente -1
             client = 1
         else:
-            connect_receive = self.clientWhite # o destinatario é o client 1
+            recipient_conn = self.clientWhite  # O destinatário é o cliente 1
             client = -1
-            
-        if connect_receive is not None:
+
+        if recipient_conn is not None:
             try:
-                data=json.loads(message)
-                self.handle_message(data, sender) # proecessa a mensagem
+                data = json.loads(message)
+                self.handle_message(data, sender)  # Processa a mensagem
             except (BrokenPipeError, ConnectionResetError):
                 print(f"Connection error with recipient client {client}.")
             except json.JSONDecodeError:
@@ -88,11 +89,11 @@ class Server:
             return "Invalid client ID"
         
     def send_message_to(self, message, client):
-        if connect := self.clientWhite if client == 1 else self.clientBlack:
+        if conn := self.clientWhite if client == 1 else self.clientBlack:
             try:
-                connect.receive_message(json.dumps(message))
+                conn.receive_message(json.dumps(message))
             except (BrokenPipeError, ConnectionResetError):
-                print(f"Connection error with client {client}. Removing client")
+                print(f"Connection error with client {client}. Removing client.")
                 if client == 1:
                     self.clientWhite = None
                 else:
@@ -146,10 +147,10 @@ class Server:
                     
     def executeChat(self, message):
         content = message.get('content')
-        client = message.get('player')
+        client = message.get('playerTurn')
         message = {
-        "type":NotificationType.CHAT.value,
-        "content": content,
+        "type": NotificationType.CHAT.value,
+        "content": content, 
         }
         self.send_message_to(message, client)
         
