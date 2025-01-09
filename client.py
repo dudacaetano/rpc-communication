@@ -13,7 +13,7 @@ from xmlrpc.server import SimpleXMLRPCServer
 
 
 class Client:
-    def __init__(self, HOST = '0.0.0.0', PORT=4444):
+    def __init__(self, HOST = '0.0.0.0', PORT=7474):
         self.HOST = HOST
         self.PORT = PORT
 
@@ -156,9 +156,9 @@ class Client:
         self.executeScore()
         
         if self.playerTurn == 1:
-            self.whitePointsTxt += 'WHITE# YOU'
+            self.whitePointsTxt += 'WHITE#YOU'
         else: 
-            self.blackPointsTxt += 'BLACK# YOU'
+            self.blackPointsTxt += 'BLACK#YOU'
         
         self.board.tokens.clear()
         boardLogic = message.get('board')
@@ -184,8 +184,8 @@ class Client:
         self.endGame = True 
         
         resultsGame = {
-            1:('YOU ARE THE WINNER!!', 'YOU LOST:('),
-            -1:('YOU LOST:(','YOU ARE THE WINNER!!'),
+            1:('THE WINNER!!', 'THE LOSER:('),
+            -1:('THE LOSER:(','THE WINNER!!'),
             0:('#RRR','#RRR')  
         }
         
@@ -195,7 +195,7 @@ class Client:
         self.blackPointsTxt += f'{resultsGame[WINNER][1]}'
         
         
-    def executeGiveUp(self,message):
+    def executeGiveUp(self):
         self.endGame = True
         
         resultsGame = {
@@ -214,16 +214,16 @@ class Client:
         if message_type == NotificationType.REFRESH.value:
             self.executeRefresh(message)
         
-        if message_type == NotificationType.CONFIG.value:
+        elif message_type == NotificationType.CONFIG.value:
             self.executeConfig(message)
         
-        if message_type == NotificationType.CHAT.value:
-            self.executeChat()
+        elif message_type == NotificationType.CHAT.value:
+            self.executeChat(message)
         
-        if message_type == NotificationType.END_GAME.value:
+        elif message_type == NotificationType.END_GAME.value:
             self.executeEndGame()
             
-        if message_type == NotificationType.GIVEUP.value:
+        elif message_type == NotificationType.GIVEUP.value:
             self.executeGiveUp()
         
         else: 
@@ -263,14 +263,14 @@ class Client:
                     else: 
                         # se desistir
                         if 800 <= x <= (800+250) and 130 <= y <= (130+130):
-                            self.send_giveup()
+                            self.send_giveUp()
                             self.endGame = True
                             
                             if self.playerTurn == 1:
-                                self.blackPointsTxt += ' YOU ARE THE WINNER'
+                                self.blackPointsTxt += ' THE WINNER'
                                 self.whitePointsTxt += ' GAVEUP :('
                             else:
-                                self.whitePointsTxt += ' YOU ARE THE WINNER'
+                                self.whitePointsTxt += ' THE WINNER'
                                 self.blackPointsTxt += ' GAVEUP'
                         elif self.gameTurn == self.playerTurn:
                             x, y = (x - 80) // 80, (y - 80) // 80

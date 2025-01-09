@@ -151,7 +151,7 @@ class Server:
         "type":NotificationType.CHAT.value,
         "content": content,
         }
-        self.send_message_to(content, client)
+        self.send_message_to(message, client)
         
     def executeReset(self):
         self.board.clearBoardLogic()
@@ -164,10 +164,7 @@ class Server:
         message = {
             "type":NotificationType.GIVEUP.value
         }
-        self.send_message_to(message, client* -1)
-        
-        
-        
+        self.send_message_to(message, client)
         
     def handle_message(self, message, client):
         print(message)
@@ -176,13 +173,13 @@ class Server:
         if message_type == NotificationType.ACTION.value:
             self.executeMove(message)
         
-        if message_type == NotificationType.CHAT.value:
+        elif message_type == NotificationType.CHAT.value:
             self.executeChat(message)
         
-        if message_type == NotificationType.RESET.value:
+        elif message_type == NotificationType.RESET.value:
             self.executeReset()
         
-        if message_type == NotificationType.GIVEUP.value:
+        elif message_type == NotificationType.GIVEUP.value:
             self.executeGiveUp(client, message)
         
         else: 
