@@ -40,66 +40,79 @@ class Server:
         self.whitePoints = 2
         self.blackPoints = 2
         
-    def register(self):
+    def register_client(self):
         """
         Registra o cliente como 1 ou -1
+        Registra o cliente e retorna a configuração inicial via RPC
         """
         with self.lock:
             if self.clientWhite is None:
-                self.clientWhite = None
-                return self.get_setup(1)
+                self.clientWhite = True
+                print("White client registered.")
+                return self.get_config(1)
             elif self.clientBlack is None:
-                self.clientBlack = None
-                return self.get_setup(-1)
+                self.clientBlack = True
+                print("Black client registered.")
+                return self.get_config(-1)
             else:
-                return 0 #Não há espaço para mais clientes 
+               print("Registration failed: No available slots.")
+               return {"status": "error", "message": "No available slots for registration."} 
     
     def send_message(self, sender, message):
         """
-        Recebe a mensagem de um cliente e a encaminha ao outro.
+         Envia uma mensagem de um cliente para o outro via RPC.
         """
-        if sender == 1:
-            recipient_conn = self.clientBlack  # O destinatário é o cliente -1
-            client = 1
-        else:
-            recipient_conn = self.clientWhite  # O destinatário é o cliente 1
-            client = -1
-
-        if recipient_conn is not None:
-            try:
-                data = json.loads(message)
-                self.handle_message(data, sender)  # Processa a mensagem
-            except (BrokenPipeError, ConnectionResetError):
-                print(f"Connection error with recipient client {client}.")
-            except json.JSONDecodeError:
-                print("Error decoding the JSON message.")
-        return f"Client {client} not connected."
+        recipient_conn = self.clientBlack if sender == 1 else self.clientWhite
+        if not recipient_conn:
+            return {"status": "error", "message": f"Recipient client ({-sender}) not connected."}
+        try:
+            data = json.loads(message)
+            self.handle_message(data, sender)  # Processa a mensagem
+            return {"status": "success", "message": "Message delivered successfully."}
+        except json.JSONDecodeError:
+            return {"status": "error", "message": "Invalid JSON message format."}
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to deliver message: {str(e)}."}
     
-    def receive_callback(self, client_id, callback_address):
+    def receive_client_callback(self, client_id, callback_address):
         """
         Registra o endereço do callback de um cliente
         """
         with self.lock:
-            if client_id == 1:
-                self.clientWhite = ServerProxy(callback_address)
-                return "Callback registered for white."
-            elif client_id == -1:
-                self.clientBlack = ServerProxy(callback_address)
-                return "Callback registered for black"
-            return "Invalid client ID"
+            try:
+                proxy = ServerProxy(callback_address)
+                if client_id == 1:
+                   self.clientWhite = proxy
+                   print("Callback registered for white")
+                   return {"status": "success", "message": "Callback registered for white."}
+                elif client_id == -1:
+                   self.clientBlack = proxy
+                   print("Callback registered for black")
+                   return {"status": "success", "message": "Callback registered for black."}
+                else:
+                   return {"status": "error", "message": "Invalid client ID."}
+            except Exception as e:
+                return {"status": "error", "message": f"Failed to register callback: {str(e)}."}
         
     def send_message_to(self, message, client):
-        if conn := self.clientWhite if client == 1 else self.clientBlack:
-            try:
-                conn.receive_message(json.dumps(message))
-            except (BrokenPipeError, ConnectionResetError):
-                print(f"Connection error with client {client}. Removing client.")
+        conn = self.clientWhite if client == 1 else self.clientBlack
+        if not conn: 
+            return {"status": "error", "message": f"Client {client} not connected."}
+        try:
+            conn.receive_message(json.dumps(message))
+            print(f"Message sent to client {client}")
+            return {"status": "success", "message": f"Message sent to client {client}."}
+        except Exception as e:
+            #Remove o cliente da lista se a conexão falhar
+            with self.lock:
                 if client == 1:
-                    self.clientWhite = None
+                    self.clientWhite = None 
                 else:
                     self.clientBlack = None
+            print(f"Failed to send message to client {client}:{str(e)}")
+            return{"status": "error", "message": f"Failed to send message to client {client}: {str(e)}"}
                     
-    def get_setup (self,client):
+    def get_config (self,client):
         message = {
            "type":NotificationType.CONFIG.value,
             "playerTurn": client,
@@ -109,7 +122,7 @@ class Server:
         return json.dumps(message)
     
     def send_config(self, client):
-        config = self.get_setup(client)
+        config = self.get_config(client)
         self.send_message_to(json.loads(config), client)
         
     def send_refresh(self):

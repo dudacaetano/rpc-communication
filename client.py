@@ -1,10 +1,11 @@
 import socket 
 #import msgpack as m
 import json
-import pygame as p  
 import threading
 
-from datetime import datetime
+import re
+
+import pygame as p  
 
 from utils.notification import NotificationType
 from gameConstruct.board import DrawGrid
@@ -48,48 +49,68 @@ class Client:
         self.callback_address = None
         
     
-    def start_callback_server(self, PORT=0):
-        """
-        Inicia um servidor de callback XML-RPC para receber mensagens.
-        """
+    """
+    Inicia um servidor de callback RPC no cliente para processar mensagens recebidas do servidor principal,
+    decodificando e encaminhando para o método de tratamento.
+
+    Args:
+        PORT (int, optional): A porta na qual o servidor de callback será iniciado. 
+                              Use 0 para permitir que o sistema escolha uma porta disponível automaticamente. 
+                              Default: 0.
+
+    Returns:
+        str: O endereço do servidor de callback no formato 'http://<HOST>:<PORT>'.
+    """
+    def start_async_callback(self, PORT=0):
+       
         def receive_message(message):
             print(message)
-            msg = json.loads(message)
-            print(f"\nMessage received: {msg}")
-            self.handle_message(msg)
+            try:
+                msg = json.loads(message)
+                print(f"\nMessage received: {msg}")
+                self.handle_message(msg)
+            except json.JSONDecodeError:
+                print("Erro ao decodificar a mensagem")
             return True
 
         # Inicia o servidor e captura o endereço
         callback_server = SimpleXMLRPCServer(("0.0.0.0", PORT), allow_none=True, logRequests=False)
         callback_server.register_function(receive_message, "receive_message")
 
-        # Obtém a porta usada se `port=0` foi passado
-        assigned_port = callback_server.server_address[1]
+        #Obtém a porta usada caso `port=0` tenha sido passado (porta aleatória)
+        port_server_refer = callback_server.server_address[1]
 
         threading.Thread(target=callback_server.serve_forever, daemon=True).start()
-        return f"http://{self.HOST}:{assigned_port}"
+        return f"http://{self.HOST}:{port_server_refer}"
         
         
     
-    def register(self):
-        setup_data = self.remoteserver.register()
+    def setup_client(self):
+        """
+        Configura e registra o cliente no servidor remoto, além de iniciar o servidor de callback.
+        """
+        # Registrar o cliente no servidor remoto e obter a configuração inicial
+        setup_data = self.remoteserver.register_client()
         print(json.loads(setup_data))
-        self.executeConfig(json.loads(setup_data))
+        config =  json.loads(setup_data)
+        self.executeConfig(config)
 
-        print(f"Connected as Client {self.playerTurn}")
+        # Exibe o status da conexão
+        print(f"Cliente {self.playerTurn} conectado com sucesso!")
 
-
-        self.callback_address = self.start_callback_server()
-        print(f"Listening for messages on {self.callback_address}...")
-        self.remoteserver.receive_callback(self.playerTurn, self.callback_address)
+        self.callback_address = self.start_async_callback()
+        print(f"Esperando por mensagens em {self.callback_address}")
+        self.remoteserver.receive_client_callback(self.playerTurn, self.callback_address)
     
     def run(self):
-       HOST =  input ('Enter the server IP to connect:').strip()
-       PORT = input('Enter the server PORT to connect:').strip()
-       self.HOST = HOST
-       self.PORT = int(PORT)
+       server_ip =  input ('Enter the server IP to connect:').strip()
+       server_port = input('Enter the server PORT to connect:').strip()
+       
+       self.HOST = server_ip
+       self.PORT = int(server_port)
+       
        self.remoteserver = ServerProxy(f"http://{self.HOST}:{self.PORT}/", allow_none=True)
-       self.register()
+       self.setup_client()
         
     
     def run_GUI(self):
@@ -101,21 +122,31 @@ class Client:
             self.gameClock.tick(60)
             
     def receive_messages(self):
-        try:
-            while self.RUN:
-                if _message := self.socket.recv(4096).decode():
-                    print()
-                    print(_message)
+        while self.RUN:
+            try:
+                #receber dados do servidor 
+                received_data = self.socket.recv(4096).decode()
+                
+                if received_data:
+                    print("\nMensagem recebida:", received_data)
+                    
+                    #tentar fazer o parsing da mensagem como JSON
                     try:
-                        message = json.loads(_message)
+                        message = json.loads(received_data)
                         self.handle_message(message)
                     except json.JSONDecodeError:
-                        print("Error decoding the JSON message.")
-        except ConnectionResetError:
-            print("Connection lost with the server.")
-        finally:
-            self.socket.close()
-    
+                        print("Falha ao decodificar a mensagem JSON")
+            except ConnectionRefusedError:
+                print(f"Conexão com o servidor foi perdida")
+                break #finaliza o loop em caso de perda de conexão
+            except Exception as e :
+                print(f"Erro inesperado:{e}")
+                break #Finaliza o loop em caso de erro inesperado
+            finally:
+                #fecha o socket quando o loop for finalizado
+                if not self.RUN:
+                    self.socket.close()
+                    
     def send_move(self, x, y):
         message = {
             "type": NotificationType.ACTION.value,
@@ -239,65 +270,118 @@ class Client:
             print("Unknown message type", message)
     
     def get_server_address(self):
-        HOST = input('Enter the server IP to connect: ').strip()
-        PORT = input('Enter the server port to connect: ').strip()
-        self.HOST = HOST
-        self.PORT = int(PORT)
+        """
+        solicita ao usuário o IP e a porta do servidor e valida as entradas
+        Atualiza os atributos de HOST e PORT do objeto  
+        """
+        while True: 
+            try: 
+                #solicita o ip do servidor 
+                server_ip = input("Please enter the server IP address:").strip()
+                #valida se o IP está no formato correto
+                if not self.id_valid_ip(server_ip):
+                    print("IP esta no formato invalide. Tente novamente")
+                    continue
+                
+                #solicita a porta do servidor 
+                server_port = input("Please enter the server port:").strip()
+                #verifica se a porta e um numero valido
+                if not server_port.isdigit() or not (1024 <= int(server_port) <= 65535):
+                    print("Porta Invalida. Tente novamente com um numero valido")
+                    continue
+                
+                #atualiza os atributos do objeto
+                self.HOST = server_ip
+                self.PORT = int(server_port)
+                break #sai do loop se tudo estiver ok 
+            
+            except Exception as e :
+                print(f"An error ocurred:{e}")
+                continue
+            
+    def is_valis_ip(self, ip):
+        """
+        Valida se o endereço IP fornecido está no formato correto(IPv4)
+        """
+        ip_pattern = r"^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+        return bool(re.match(ip_pattern, ip))
+        
+    #================================================     
+    '''
+    botões de evento 
+    '''
+    def quitEvent(self, event):
+        if event.type == p.QUIT:
+            self.send_giveUp()
+            self.RUN = False
+    
+    def textInput(self, event):
+        if event.type == p.TEXTINPUT:
+            if len(self.INPUT_TEXT) < 19:
+                self.INPUT_TEXT += event.text
+    
+    def keydownEvent(self, event):
+        if event.type == p.KEYDOWN:
+            if event.key == p.K_BACKSPACE:
+                self.INPUT_TEXT = self.INPUT_TEXT[:-1]
+            elif event.key == p.K_RETURN and self.INPUT_TEXT != '':
+                self.send_message_chat(self.INPUT_TEXT)
+                self.chatLog.append(["s", self.INPUT_TEXT])
+                self.INPUT_TEXT = ''
+                
+    def mouseButtonEvent(self, event):
+        if event.type == p.MOUSEBUTTONDOWN and event.button == 1:
+            x, y = p.mouse.get_pos()
+            if self.endGame:
+                self.endGameMouseClick(x, y)
+            else:
+                self.gameMouseClick(x, y)
+    def endGameMouseClick(self, x, y):
+        if 800 <= x <= (800 + 250) and 130 <= y <= (130 + 30):
+            self.send_reset()
+            
+    def gameMouseClick(self, x, y):
+        if 800 <= x <= (800 + 250) and 130 <= y <= (130 + 30):
+            self.send_giveUp()
+            self.endGame = True
+            self.updateScoreGiveup()
+        elif self.gameTurn == self.playerTurn:
+            self.gameMove(x, y)
+    
+    def updateScoreGiveup(self):
+        if self.playerTurn == 1:
+            self.blackPointsTxt += ' YOU ARE THE WINNER'
+            self.whitePointsTxt += ' GAVEUP :('
+        else:
+            self.whitePointsTxt += ' YOU ARE THE WINNER'
+            self.blackPointsTxt += ' GAVEUP'
+    
+    def gameMove(self, x, y):
+        x, y = (x - 80) // 80, (y - 80) // 80
+        if validCells := self.board.findPlayableMoves(self.board.boardLogic, self.gameTurn):
+            if (y, x) in validCells:
+                self.board.insertToken(self.board.boardLogic, self.gameTurn, y, x)
+                swappableTiles = self.board.fetchSwappableTiles(y, x, self.board.boardLogic, self.gameTurn)
+                for tile in swappableTiles:
+                    self.board.animateTransitions(tile, self.gameTurn)
+                    self.board.boardLogic[tile[0]][tile[1]] *= -1
+                self.send_move(x, y)
+                self.gameTurn *= -1
+                self.executeScore()
     
     def input(self):
+        eventHandler = {
+            p.QUIT: self.quitEvent,
+            p.TEXTINPUT: self.textInput,
+            p.KEYDOWN: self.keydownEvent,
+            p.MOUSEBUTTONDOWN: self.mouseButtonEvent
+        }
         for event in p.event.get():
-            if event.type == p.QUIT:
-                self.send_giveUp()
-                self.RUN = False
-            if event.type == p.TEXTINPUT:
-                if len(self.INPUT_TEXT) < 19:
-                    self.INPUT_TEXT += event.text
-            if event.type == p.KEYDOWN:
-                if event.key == p.K_BACKSPACE:
-                    self.INPUT_TEXT = self.INPUT_TEXT[:-1]
-                if event.key == p.K_RETURN and self.INPUT_TEXT != '':
-                    self.send_message_chat(self.INPUT_TEXT)
-                    self.chatLog.append(["s", self.INPUT_TEXT])
-                    self.INPUT_TEXT = ''
-                    
-            if event.type == p.MOUSEBUTTONDOWN:
-                if event.button == 1:
-                    x, y = p.mouse.get_pos()
-                    
-                    if self.endGame:
-                        # se jogar novamente 
-                        if 800 <= x <= (800+250) and 130 <= y <= (130+30):
-                            print()
-                            self.send_reset()
-                    else: 
-                        # se desistir
-                        if 800 <= x <= (800+250) and 130 <= y <= (130+130):
-                            self.send_giveUp()
-                            self.endGame = True
-                            
-                            if self.playerTurn == 1:
-                                self.blackPointsTxt += ' THE WINNER'
-                                self.whitePointsTxt += ' GAVEUP :('
-                            else:
-                                self.whitePointsTxt += ' THE WINNER'
-                                self.blackPointsTxt += ' GAVEUP'
-                        elif self.gameTurn == self.playerTurn:
-                            x, y = (x - 80) // 80, (y - 80) // 80
-                            if validCells := self.board.findPlayableMoves(self.board.boardLogic, self.gameTurn):
-                                if (y, x) in validCells:
-                                    self.board.insertToken(self.board.boardLogic, self.gameTurn, y, x)
-                                    swappableTiles = self.board.fetchSwappableTiles(y, x, self.board.boardLogic, self.gameTurn)
-                                    for tile in swappableTiles:
-                                         self.board.animateTransitions(tile, self.gameTurn)
-                                         self.board.boardLogic[tile[0]][tile[1]] *= -1
-                                    self.send_move(x, y)
-                                    self.gameTurn *= -1
-                                    self.executeScore()
-                            
-                        
-            
-        
-    
+            handler = eventHandler.get(event.type)
+            if handler:
+                handler(event)
+                                    
+                                    
     def refresh(self, boardLogic, gameTurn):
         self.board.boardLogic = boardLogic  #atualiza o grid com a nova logica
         
@@ -405,7 +489,7 @@ class Client:
         self.HOST = HOST
         self.PORT = int(PORT)'''
         
-if __name__ == "__main__":
+if __name__ == '__main__':
     client = Client()
     client.run()
     client.run_GUI() 
